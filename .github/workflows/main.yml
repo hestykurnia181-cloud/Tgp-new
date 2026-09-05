@@ -1,0 +1,126 @@
+name: Ekstrak ZIP TGP ke Repository
+
+on:
+  workflow_dispatch:
+    inputs:
+      zip_file:
+        description: "Nama file ZIP di root repository"
+        required: true
+        default: "tgp-management.zip"
+
+permissions:
+  contents: write
+
+jobs:
+  extract:
+    name: Ekstrak Source Code TGP
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Cari File ZIP
+        id: find_zip
+        shell: bash
+        run: |
+          ZIP="${{ github.event.inputs.zip_file }}"
+
+          if [ ! -f "$ZIP" ]; then
+            echo "❌ File ZIP tidak ditemukan: $ZIP"
+            echo ""
+            echo "File ZIP yang tersedia:"
+            find . -maxdepth 2 -type f -iname "*.zip" -print
+            exit 1
+          fi
+
+          echo "ZIP ditemukan: $ZIP"
+          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+
+      - name: Ekstrak ZIP
+        shell: bash
+        run: |
+          ZIP="${{ steps.find_zip.outputs.zip }}"
+
+          mkdir -p extracted
+
+          echo "📦 Mengekstrak $ZIP..."
+          unzip -q -o "$ZIP" -d extracted
+
+          # Cari package.json
+          PKG_DIR=$(find extracted -name package.json -type f \
+            -not -path "*/node_modules/*" \
+            -exec dirname {} \; | head -n 1)
+
+          if [ -z "$PKG_DIR" ]; then
+            echo "❌ package.json tidak ditemukan di dalam ZIP."
+            find extracted -maxdepth 3 -type f | head -100
+            exit 1
+          fi
+
+          echo "✅ Project ditemukan di: $PKG_DIR"
+
+          # Salin source project ke root repository
+          cp -r "$PKG_DIR"/. .
+
+          # Jangan hapus workflow GitHub yang sedang berjalan
+          if [ -d "$PKG_DIR/.github" ]; then
+            echo "ℹ️ Folder .github dari ZIP tidak digunakan untuk mengganti workflow aktif."
+          fi
+
+          rm -rf extracted
+
+          # Hapus ZIP setelah berhasil diekstrak
+          rm -f "$ZIP"
+
+          echo "======================================"
+          echo "✅ EKSTRAKSI BERHASIL"
+          echo "======================================"
+
+          echo "Isi repository:"
+          ls -la
+
+      - name: Verifikasi Project
+        shell: bash
+        run: |
+          echo "🔍 Memeriksa file utama..."
+
+          test -f package.json || {
+            echo "❌ package.json tidak ditemukan"
+            exit 1
+          }
+
+          test -f vite.config.ts || {
+            echo "❌ vite.config.ts tidak ditemukan"
+            exit 1
+          }
+
+          test -d src || {
+            echo "❌ folder src tidak ditemukan"
+            exit 1
+          }
+
+          echo "✅ package.json ditemukan"
+          echo "✅ vite.config.ts ditemukan"
+          echo "✅ src ditemukan"
+
+      - name: Commit Hasil Ekstraksi
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add -A
+
+          if git diff --cached --quiet; then
+            echo "ℹ️ Tidak ada perubahan untuk di-commit."
+            exit 0
+          fi
+
+          git commit -m "Extract TGP Management source from ZIP"
+
+          git push origin HEAD:${{ github.ref_name }}
+
+          echo "✅ Source TGP berhasil disimpan ke repository."
