@@ -1,19 +1,16 @@
-name: Ekstrak ZIP TGP ke Repository
+name: Ekstrak ZIP TGP
 
 on:
   workflow_dispatch:
-    inputs:
-      zip_file:
-        description: "Nama file ZIP di root repository"
-        required: true
-        default: "tgp-management.zip"
+  push:
+    paths:
+      - "*.zip"
 
 permissions:
   contents: write
 
 jobs:
   extract:
-    name: Ekstrak Source Code TGP
     runs-on: ubuntu-latest
 
     steps:
@@ -22,92 +19,65 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Cari File ZIP
-        id: find_zip
-        shell: bash
+      - name: Cari ZIP
+        id: zip
         run: |
-          ZIP="${{ github.event.inputs.zip_file }}"
+          ZIP=$(find . -maxdepth 1 -type f -iname "*.zip" | head -n 1)
 
-          if [ ! -f "$ZIP" ]; then
-            echo "❌ File ZIP tidak ditemukan: $ZIP"
-            echo ""
-            echo "File ZIP yang tersedia:"
-            find . -maxdepth 2 -type f -iname "*.zip" -print
+          if [ -z "$ZIP" ]; then
+            echo "❌ ZIP tidak ditemukan di root repository"
             exit 1
           fi
 
           echo "ZIP ditemukan: $ZIP"
-          echo "zip=$ZIP" >> "$GITHUB_OUTPUT"
+          echo "file=$ZIP" >> "$GITHUB_OUTPUT"
 
       - name: Ekstrak ZIP
-        shell: bash
         run: |
-          ZIP="${{ steps.find_zip.outputs.zip }}"
+          ZIP="${{ steps.zip.outputs.file }}"
 
           mkdir -p extracted
 
           echo "📦 Mengekstrak $ZIP..."
           unzip -q -o "$ZIP" -d extracted
 
-          # Cari package.json
-          PKG_DIR=$(find extracted -name package.json -type f \
+          echo "🔍 Mencari package.json..."
+
+          PROJECT_DIR=$(find extracted \
+            -name package.json \
             -not -path "*/node_modules/*" \
             -exec dirname {} \; | head -n 1)
 
-          if [ -z "$PKG_DIR" ]; then
-            echo "❌ package.json tidak ditemukan di dalam ZIP."
-            find extracted -maxdepth 3 -type f | head -100
+          if [ -z "$PROJECT_DIR" ]; then
+            echo "❌ package.json tidak ditemukan"
+            find extracted -maxdepth 3 -type f
             exit 1
           fi
 
-          echo "✅ Project ditemukan di: $PKG_DIR"
+          echo "✅ Project ditemukan:"
+          echo "$PROJECT_DIR"
 
-          # Salin source project ke root repository
-          cp -r "$PKG_DIR"/. .
+          echo "📂 Menyalin source TGP..."
 
-          # Jangan hapus workflow GitHub yang sedang berjalan
-          if [ -d "$PKG_DIR/.github" ]; then
-            echo "ℹ️ Folder .github dari ZIP tidak digunakan untuk mengganti workflow aktif."
-          fi
+          cp -r "$PROJECT_DIR"/. .
 
           rm -rf extracted
 
-          # Hapus ZIP setelah berhasil diekstrak
+          echo "🗑️ Menghapus ZIP..."
           rm -f "$ZIP"
 
-          echo "======================================"
-          echo "✅ EKSTRAKSI BERHASIL"
-          echo "======================================"
-
-          echo "Isi repository:"
-          ls -la
-
-      - name: Verifikasi Project
-        shell: bash
+      - name: Verifikasi
         run: |
-          echo "🔍 Memeriksa file utama..."
+          echo "🔍 Verifikasi project..."
 
-          test -f package.json || {
-            echo "❌ package.json tidak ditemukan"
-            exit 1
-          }
-
-          test -f vite.config.ts || {
-            echo "❌ vite.config.ts tidak ditemukan"
-            exit 1
-          }
-
-          test -d src || {
-            echo "❌ folder src tidak ditemukan"
-            exit 1
-          }
+          test -f package.json
+          test -d src
 
           echo "✅ package.json ditemukan"
-          echo "✅ vite.config.ts ditemukan"
           echo "✅ src ditemukan"
+          echo "✅ TGP berhasil diekstrak"
 
-      - name: Commit Hasil Ekstraksi
-        shell: bash
+      - name: Commit Hasil
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
@@ -115,12 +85,9 @@ jobs:
           git add -A
 
           if git diff --cached --quiet; then
-            echo "ℹ️ Tidak ada perubahan untuk di-commit."
+            echo "Tidak ada perubahan."
             exit 0
           fi
 
-          git commit -m "Extract TGP Management source from ZIP"
-
-          git push origin HEAD:${{ github.ref_name }}
-
-          echo "✅ Source TGP berhasil disimpan ke repository."
+          git commit -m "Extract TGP source from ZIP"
+          git push
